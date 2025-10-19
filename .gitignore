@@ -1,0 +1,37 @@
+# VSCode settings
+.vscode/
+
+# Build directories
+build/
+Debug/
+Release/
+x64/
+x86/
+
+# Compiled objects
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+
+# ITK/VTK temporary files
+*.gpl
+*.raw
+*.mhd
+*.raw
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
