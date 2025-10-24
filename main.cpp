@@ -65,6 +65,9 @@ VTK_MODULE_INIT(vtkInteractionStyle)
 // #include <vector>
 // #include <cmath>
 
+// Рефакторинг
+#include "Parameters.h"
+
 
 using InputPixelType = short;
 using PixelType = float;
@@ -79,6 +82,7 @@ using LabelToRGBFilter = itk::LabelToRGBImageFilter<LabelImageType, RGBImageType
 
 int main()
 {
+    Params par;
     // Регистрируем поддержку GIPL формата
     itk::GiplImageIOFactory::RegisterOneFactory();
     
@@ -137,7 +141,7 @@ int main()
         using MedianFilterType = itk::MedianImageFilter<ImageType, ImageType>;
         auto medianFilter = MedianFilterType::New();
         medianFilter->SetInput(castFilter->GetOutput());
-        medianFilter->SetRadius(1);
+        medianFilter->SetRadius(par.median_filter_medianRadius);
         
         using GradientFilterType = itk::GradientMagnitudeImageFilter<ImageType, ImageType>;
         auto gradientFilter = GradientFilterType::New();
@@ -146,8 +150,8 @@ int main()
         using WatershedFilterType = itk::WatershedImageFilter<ImageType>;
         auto watershedFilter = WatershedFilterType::New();
         watershedFilter->SetInput(gradientFilter->GetOutput());
-        watershedFilter->SetThreshold(0.005);
-        watershedFilter->SetLevel(0.01);
+        watershedFilter->SetThreshold(par.watershed_threshold);
+        watershedFilter->SetLevel(par.watershed_level);
         
         using RGBFilterType = itk::LabelToRGBImageFilter<LabelImageType, RGBImageType>;
         auto rgbFilter = RGBFilterType::New();
@@ -155,12 +159,12 @@ int main()
         rgbFilter->SetBackgroundValue(0);
         
         rgbFilter->Update();
-        std::cout << "   ✓ Watershed сегментация завершена" << std::endl;
+        std::cout << " Watershed сегментация завершена" << std::endl;
 
 
 
-        // ДИАГНОСТИКА WATERSHED
-        std::cout << "   Диагностика watershed..." << std::endl;
+        // Сегментация WATERSHED
+        std::cout << "   Сегментация watershed..." << std::endl;
 
         // Проверим выход watershed (метки)
         LabelImageType::Pointer labelImage = watershedFilter->GetOutput();
@@ -233,7 +237,7 @@ int main()
 
         // Используем RGBA данные вместо RGB
         segmentationData = rgbaData;
-        std::cout << "   ✓ Данные преобразованы в RGBA" << std::endl;
+        std::cout << " Данные преобразованы в RGBA" << std::endl;
         
         // ДИАГНОСТИКА СЕГМЕНТАЦИИ
         std::cout << "   Диагностика сегментации:" << std::endl;
@@ -266,14 +270,14 @@ int main()
         // Функция непрозрачности для основного изображения
         vtkSmartPointer<vtkPiecewiseFunction> compositeOpacity = 
             vtkSmartPointer<vtkPiecewiseFunction>::New();
-        compositeOpacity->AddPoint(0,     0.00);
-        compositeOpacity->AddPoint(20,    0.00);
-        compositeOpacity->AddPoint(40,    0.15);
-        compositeOpacity->AddPoint(70,    0.25);
-        compositeOpacity->AddPoint(100,   0.40);
-        compositeOpacity->AddPoint(150,   0.65);
-        compositeOpacity->AddPoint(200,   0.80);
-        compositeOpacity->AddPoint(269,   0.90);
+        compositeOpacity->AddPoint(0,     0.00 * par.brainOpacity);
+        compositeOpacity->AddPoint(20,    0.00 * par.brainOpacity);
+        compositeOpacity->AddPoint(40,    0.15 * par.brainOpacity);
+        compositeOpacity->AddPoint(70,    0.25 * par.brainOpacity);
+        compositeOpacity->AddPoint(100,   0.40 * par.brainOpacity);
+        compositeOpacity->AddPoint(150,   0.65 * par.brainOpacity);
+        compositeOpacity->AddPoint(200,   0.80 * par.brainOpacity);
+        compositeOpacity->AddPoint(269,   0.90 * par.brainOpacity);
         
         volumeProperty->SetScalarOpacity(compositeOpacity);
         
@@ -312,9 +316,9 @@ int main()
         // Функция непрозрачности
         vtkSmartPointer<vtkPiecewiseFunction> segmentationOpacity = 
             vtkSmartPointer<vtkPiecewiseFunction>::New();
-        segmentationOpacity->AddPoint(0, 0.0);
-        segmentationOpacity->AddPoint(1, 0.4);
-        segmentationOpacity->AddPoint(255, 0.6);
+        segmentationOpacity->AddPoint(0, 0.0 * par.segmentationOpacity);
+        segmentationOpacity->AddPoint(1, 0.4 * par.segmentationOpacity);
+        segmentationOpacity->AddPoint(255, 0.6 * par.segmentationOpacity);
 
         segmentationProperty->SetScalarOpacity(segmentationOpacity);
 
@@ -322,7 +326,7 @@ int main()
         segmentationVolume->SetMapper(segmentationMapper);
         segmentationVolume->SetProperty(segmentationProperty);
         
-        std::cout << "   ✓ Оба volume созданы" << std::endl;
+        std::cout << "  Оба volume созданы" << std::endl;
         
         // ЭТАП 4: СОЗДАНИЕ СЦЕНЫ
         std::cout << "4. Создание сцены..." << std::endl;
