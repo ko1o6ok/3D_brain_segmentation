@@ -24,7 +24,8 @@
 // Для сегментации
 // #include <itkWatershedImageFilter.h>
 #include <itkConnectedThresholdImageFilter.h>
-
+#include <itkComposeImageFilter.h>
+#include <itkVectorConfidenceConnectedImageFilter.h>
 
 #include <vtkImageReslice.h>
 #include <vtkImageActor.h>
@@ -64,6 +65,9 @@
 #include <vtkVolume.h>
 
 
+#include <vtkLookupTable.h>
+#include <vtkImageMapToColors.h>
+
 // Рисование меток, где находятся сиды
 #include <vtkSphereSource.h>
 #include <vtkPolyDataMapper.h>
@@ -91,10 +95,52 @@ constexpr unsigned int Dimension = 3; // Исправлено: было Dimentio
 using InputImageType = itk::Image<InputPixelType, Dimension>;
 
 using ImageType = itk::Image<PixelType, Dimension>;
-using LabelImageType = itk::Image<unsigned long, Dimension>;
+using VectorImageType = itk::Image<itk::Vector<PixelType, 2>, Dimension>;
+using LabelImageType = itk::Image<unsigned char, Dimension>;
 using RGBPixelType = itk::RGBPixel<unsigned char>;
 using RGBImageType = itk::Image<RGBPixelType, Dimension>;
 // using LabelToRGBFilter = itk::LabelToRGBImageFilter<LabelImageType, RGBImageType>;
+
+// ДОБАВЬТЕ ЭТУ ФУНКЦИЮ ПЕРЕД main():
+// Функция для создания визуальных маркеров сидов
+void AddSeedMarkers(vtkRenderer* renderer, ImageType::Pointer image, 
+                   const std::vector<std::array<int, 3>>& seeds,
+                   const std::vector<std::array<double, 3>>& colors) {
+    
+    ImageType::SpacingType spacing = image->GetSpacing();
+    ImageType::PointType origin = image->GetOrigin();
+    
+    for (size_t i = 0; i < seeds.size(); ++i) {
+        // Преобразуем индекс в физические координаты
+        ImageType::PointType physicalPoint;
+        ImageType::IndexType idx = {{seeds[i][0], seeds[i][1], seeds[i][2]}};
+        image->TransformIndexToPhysicalPoint(idx, physicalPoint);
+        
+        // Создаем сферу-маркер
+        vtkSmartPointer<vtkSphereSource> sphere = vtkSmartPointer<vtkSphereSource>::New();
+        sphere->SetCenter(physicalPoint[0], physicalPoint[1], physicalPoint[2]);
+        sphere->SetRadius(2.0); // Размер маркера (в мм)
+        sphere->SetPhiResolution(12);
+        sphere->SetThetaResolution(12);
+        
+        // Мэппер для сферы
+        vtkSmartPointer<vtkPolyDataMapper> sphereMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        sphereMapper->SetInputConnection(sphere->GetOutputPort());
+        
+        // Актор для сферы
+        vtkSmartPointer<vtkActor> sphereActor = vtkSmartPointer<vtkActor>::New();
+        sphereActor->SetMapper(sphereMapper);
+        sphereActor->GetProperty()->SetColor(colors[i][0], colors[i][1], colors[i][2]);
+        sphereActor->GetProperty()->SetOpacity(0.8);
+        
+        // Добавляем в сцену
+        renderer->AddActor(sphereActor);
+        
+        std::cout << "  Маркер " << i+1 << ": (" << seeds[i][0] << ", " << seeds[i][1] << ", " << seeds[i][2] 
+                  << ") -> (" << physicalPoint[0] << ", " << physicalPoint[1] << ", " << physicalPoint[2] << ")" << std::endl;
+    }
+}
+
 
 int main()
 {
@@ -233,9 +279,32 @@ int main()
         rescaleFilter_add->Update();
 
         // Композиция и сегментация серого вещества
+        using ComposeFilterType = itk::ComposeImageFilter<ImageType, VectorImageType>;
+        auto compose_filter = ComposeFilterType::New();
+        compose_filter->SetInput1(rescaleFilter->GetOutput());
+        compose_filter->SetInput2(rescaleFilter_add->GetOutput());
 
+        int seed1_x = 165, seed1_y = 178, seed1_z = 26;
+        int seed2_x = 98, seed2_y = 165, seed2_z = 26; 
+        int seed3_x = 205, seed3_y = 125, seed3_z = 26;
+        int  seed4_x = 173, seed4_y = 205, seed4_z = 26;
 
+        using VectorConfidenceConnectedFilterType = itk::VectorConfidenceConnectedImageFilter<VectorImageType, LabelImageType>;
+        auto conf_filter = VectorConfidenceConnectedFilterType::New();
+        conf_filter->SetInput(compose_filter->GetOutput());
+        conf_filter->SetNumberOfIterations(1);
+        conf_filter->SetMultiplier(0.1);
+        conf_filter->SetReplaceValue(255);
+        conf_filter->AddSeed({seed1_x, seed1_y, seed1_z});
+        conf_filter->AddSeed({seed2_x, seed2_y, seed2_z});
+        conf_filter->AddSeed({seed3_x, seed3_y, seed3_z});
+        conf_filter->AddSeed({seed4_x, seed4_y, seed4_z});
 
+        std::cout << "   Добавлены сиды для VectorConfidenceConnected:" << std::endl;
+        std::cout << "   Сид 1: (" << seed1_x << ", " << seed1_y << ", " << seed1_z << ")" << std::endl;
+        std::cout << "   Сид 2: (" << seed2_x << ", " << seed2_y << ", " << seed2_z << ")" << std::endl;
+        std::cout << "   Сид 3: (" << seed3_x << ", " << seed3_y << ", " << seed3_z << ")" << std::endl;
+        
 
 
         // СЕГМЕНТАЦИЯ ГЛАЗ - МИНИМАЛЬНЫЙ КОД
@@ -270,6 +339,15 @@ int main()
         eye_connector->Update();
 
         vtkImageData* eyeData = eye_connector->GetOutput();
+
+
+        // Подключаем результат VectorConfidenceConnected к VTK
+        using ConfidenceConnectorType = itk::ImageToVTKImageFilter<LabelImageType>;
+        auto confidence_connector = ConfidenceConnectorType::New();
+        confidence_connector->SetInput(conf_filter->GetOutput());
+        confidence_connector->Update();
+
+        vtkImageData* confidenceData = confidence_connector->GetOutput();
 
 
 
@@ -368,6 +446,42 @@ int main()
         eyeVolume->SetProperty(eyeProperty);
 
         std::cout << "  Volume для глаз создан" << std::endl;
+
+
+
+
+        // VOLUME ДЛЯ РЕЗУЛЬТАТА VectorConfidenceConnected
+        std::cout << "3.4. Настройка volume для VectorConfidenceConnected..." << std::endl;
+
+        vtkSmartPointer<vtkGPUVolumeRayCastMapper> confidenceMapper = 
+            vtkSmartPointer<vtkGPUVolumeRayCastMapper>::New();
+        confidenceMapper->SetInputData(confidenceData);
+        confidenceMapper->SetSampleDistance(0.3);
+
+        vtkSmartPointer<vtkVolumeProperty> confidenceProperty = 
+            vtkSmartPointer<vtkVolumeProperty>::New();
+        confidenceProperty->ShadeOff();
+        confidenceProperty->SetInterpolationTypeToLinear();
+
+        // Результат VectorConfidenceConnected - СИНИЙ
+        vtkSmartPointer<vtkPiecewiseFunction> confidenceOpacity = 
+            vtkSmartPointer<vtkPiecewiseFunction>::New();
+        confidenceOpacity->AddPoint(0, 0.0);    // Фон - прозрачный
+        confidenceOpacity->AddPoint(255, 0.7);  // Сегментация - полупрозрачная
+
+        vtkSmartPointer<vtkColorTransferFunction> confidenceColor = 
+            vtkSmartPointer<vtkColorTransferFunction>::New();
+        confidenceColor->AddRGBPoint(0, 0.0, 0.0, 0.0);    // Фон - черный
+        confidenceColor->AddRGBPoint(255, 0.0, 1.0, 0.0);  // Сегментация - 
+
+        confidenceProperty->SetScalarOpacity(confidenceOpacity);
+        confidenceProperty->SetColor(confidenceColor);
+
+        vtkSmartPointer<vtkVolume> confidenceVolume = vtkSmartPointer<vtkVolume>::New();
+        confidenceVolume->SetMapper(confidenceMapper);
+        confidenceVolume->SetProperty(confidenceProperty);
+
+        std::cout << "  Volume для VectorConfidenceConnected создан" << std::endl;
         
         // ЭТАП 4: СОЗДАНИЕ СЦЕНЫ
         std::cout << "4. Создание сцены..." << std::endl;
@@ -376,57 +490,42 @@ int main()
         
         // ПРАВИЛЬНЫЙ ПОРЯДОК: сначала основной volume, потом сегментация поверх                    // Основной ч/б мозг
         renderer->AddVolume(segmentationVolume);        // Цветная сегментация поверх
+        
+        renderer->AddVolume(confidenceVolume);
         renderer->AddVolume(eyeVolume);
 
-        std::cout << "Добавление визуальных маркеров для семян..." << std::endl;
+        // ВИЗУАЛИЗАЦИЯ СИДОВ В 3D ОКНЕ
+        std::cout << "4.1. Добавление маркеров сидов в 3D окно..." << std::endl;
 
-        // Получаем информацию о геометрии изображения для преобразования координат
-        ImageType::Pointer tempImage = rescaleFilter->GetOutput();
-        ImageType::SpacingType spacing = tempImage->GetSpacing();
-        ImageType::PointType origin = tempImage->GetOrigin();
-
-        // Координаты семян (те же, что используются в сегментации)
-        std::vector<ImageType::IndexType> seeds = {
-            {right_eye_x, right_eye_y, right_eye_z},  
-            {left_eye_x, left_eye_y, left_eye_z} 
-        };
-
-        // Цвета для маркеров (разные цвета для разных семян)
-        // std::vector<std::array<double, 3>> colors = {
-        //     {1.0, 0.0, 0.0},  // Красный - первое семя
-        //     {0.0, 1.0, 0.0}   // Зеленый - второе семя
+        // Сиды для глаз
+        // std::vector<std::array<int, 3>> eyeSeeds = {
+        //     {right_eye_x, right_eye_y, right_eye_z},
+        //     {left_eye_x, left_eye_y, left_eye_z}
         // };
 
-        // for (size_t i = 0; i < seeds.size(); ++i) {
-        //     // Преобразуем индекс в физические координаты
-        //     ImageType::PointType physicalPoint;
-        //     tempImage->TransformIndexToPhysicalPoint(seeds[i], physicalPoint);
-            
-        //     // Создаем сферу-маркер
-        //     vtkSmartPointer<vtkSphereSource> sphere = vtkSmartPointer<vtkSphereSource>::New();
-        //     sphere->SetCenter(physicalPoint[0], physicalPoint[1], physicalPoint[2]);
-        //     sphere->SetRadius(2.0); // Размер маркера (в мм)
-        //     sphere->SetPhiResolution(20);
-        //     sphere->SetThetaResolution(20);
-            
-        //     // Мэппер для сферы
-        //     vtkSmartPointer<vtkPolyDataMapper> sphereMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
-        //     sphereMapper->SetInputConnection(sphere->GetOutputPort());
-            
-        //     // Актор для сферы
-        //     vtkSmartPointer<vtkActor> sphereActor = vtkSmartPointer<vtkActor>::New();
-        //     sphereActor->SetMapper(sphereMapper);
-        //     sphereActor->GetProperty()->SetColor(colors[i][0], colors[i][1], colors[i][2]); // Цвет
-        //     sphereActor->GetProperty()->SetOpacity(0.8); // Полупрозрачность
-            
-        //     // Добавляем в сцену
-        //     renderer->AddActor(sphereActor);
-            
-        //     std::cout << "  Маркер " << i+1 << " в координатах: (" 
-        //             << seeds[i][0] << ", " << seeds[i][1] << ", " << seeds[i][2] << ")" 
-        //             << " -> физические: (" << physicalPoint[0] << ", " 
-        //             << physicalPoint[1] << ", " << physicalPoint[2] << ")" << std::endl;
-        // }
+        // std::vector<std::array<double, 3>> eyeColors = {
+        //     {1.0, 0.0, 0.0},  // Красный - правый глаз
+        //     {1.0, 0.5, 0.0}   // Оранжевый - левый глаз
+        // };
+
+        // AddSeedMarkers(renderer, tempImage, eyeSeeds, eyeColors);
+
+        // Сиды для VectorConfidenceConnected
+        std::vector<std::array<int, 3>> confSeeds = {
+            {seed1_x, seed1_y, seed1_z},
+            {seed2_x, seed2_y, seed2_z},
+            {seed3_x, seed3_y, seed3_z},
+            {seed4_x, seed4_y, seed4_z}
+        };
+
+        std::vector<std::array<double, 3>> confColors = {
+            {0.0, 1.0, 0.0},  // Зеленый
+            {0.0, 1.0, 1.0},  // Голубой  
+            {1.0, 0.0, 1.0},   // Фиолетовый
+            {1.0, 1.0, 0.0}
+        };
+
+        AddSeedMarkers(renderer, rescaleFilter->GetOutput(), confSeeds, confColors);
         
         renderer->SetBackground(0.0, 0.0, 0.0);
         renderer->ResetCamera();
@@ -474,7 +573,7 @@ int main()
         sliceReslice->SetInputData(segmentationData);
         sliceReslice->SetOutputDimensionality(2);
         sliceReslice->SetResliceAxesDirectionCosines(1,0,0, 0,1,0, 0,0,1);
-        sliceReslice->SetResliceAxesOrigin(0, 0, 80); // Средний срез
+        sliceReslice->SetResliceAxesOrigin(0, 0, 78); // Средний срез
         sliceReslice->Update();
 
         // Создаем актор для среза
@@ -485,6 +584,108 @@ int main()
         vtkSmartPointer<vtkRenderer> sliceRenderer = vtkSmartPointer<vtkRenderer>::New();
         sliceRenderer->AddActor(sliceActor);
         sliceRenderer->SetBackground(0.2, 0.2, 0.2); // Темный фон для лучшего контраста
+
+
+        // СОЗДАНИЕ СРЕЗА ДЛЯ СЕГМЕНТАЦИИ CONFIDENCE CONNECTED
+        std::cout << "6.2. Создание среза для сегментации Confidence Connected..." << std::endl;
+
+        // Создаем срез из результата VectorConfidenceConnected на том же уровне
+        vtkSmartPointer<vtkImageReslice> confidenceSliceReslice = vtkSmartPointer<vtkImageReslice>::New();
+        confidenceSliceReslice->SetInputData(confidenceData);
+        confidenceSliceReslice->SetOutputDimensionality(2);
+        confidenceSliceReslice->SetResliceAxesDirectionCosines(1,0,0, 0,1,0, 0,0,1);
+        confidenceSliceReslice->SetResliceAxesOrigin(0, 0, 26 * 3); // Тот же уровень, что и у сидов
+        confidenceSliceReslice->Update();
+
+        // Создаем актор для среза сегментации
+        vtkSmartPointer<vtkImageActor> confidenceSliceActor = vtkSmartPointer<vtkImageActor>::New();
+        confidenceSliceActor->GetMapper()->SetInputConnection(confidenceSliceReslice->GetOutputPort());
+
+        // Настраиваем внешний вид сегментации в 2D
+        // Сегментация будет отображаться как ЗЕЛЕНЫЕ области поверх исходного изображения
+        // confidenceSliceActor->SetOpacity(0.3); // Полупрозрачность для видимости исходного изображения под ней
+        // confidenceSliceActor->GetProperty()->SetColor(0.0, 1.0, 0.0);
+        // Создаем lookup table для зелёного цвета
+        vtkSmartPointer<vtkLookupTable> confidenceLUT = vtkSmartPointer<vtkLookupTable>::New();
+        confidenceLUT->SetNumberOfColors(256);
+        confidenceLUT->SetTableRange(0, 255);
+        confidenceLUT->Build();
+
+        // Устанавливаем черный цвет для фона (значение 0)
+        confidenceLUT->SetTableValue(0, 0.0, 0.0, 0.0, 0.0); // полностью прозрачный
+
+        // Устанавливаем зелёный цвет для сегментированных областей (значение 255)
+        confidenceLUT->SetTableValue(255, 0.0, 1.0, 0.0, 0.7); // зелёный, полупрозрачный
+
+        // Применяем LUT к данным
+        vtkSmartPointer<vtkImageMapToColors> confidenceColorMapper = vtkSmartPointer<vtkImageMapToColors>::New();
+        confidenceColorMapper->SetLookupTable(confidenceLUT);
+        confidenceColorMapper->SetInputConnection(confidenceSliceReslice->GetOutputPort());
+        confidenceColorMapper->Update();
+
+        // Обновляем актор с новыми данными
+        confidenceSliceActor->GetMapper()->SetInputConnection(confidenceColorMapper->GetOutputPort());
+
+
+        // Добавляем в сцену ПОСЛЕ исходного среза, но ДО маркеров сидов
+        sliceRenderer->AddActor(confidenceSliceActor);
+
+        std::cout << "Срез сегментации Confidence Connected добавлен (зеленый, полупрозрачный)" << std::endl;
+
+
+
+        // ДОБАВЛЯЕМ СИДЫ В 2D ОКНО
+        std::cout << "6.1. Добавление маркеров сидов в 2D окно..." << std::endl;
+
+        // Фильтруем сиды - оставляем только те, которые на текущем срезе
+        std::vector<std::array<int, 3>> seedsOnSlice;
+        std::vector<std::array<double, 3>> colorsOnSlice;
+
+        // Добавляем сиды VectorConfidenceConnected (если они на этом срезе)  
+        for (size_t i = 0; i < confSeeds.size(); ++i) {
+                seedsOnSlice.push_back(confSeeds[i]);
+                colorsOnSlice.push_back(confColors[i]);
+        }
+
+        // Создаем маркеры для 2D окна
+        // AddSeedMarkers(sliceRenderer, rescaleFilter->GetOutput(), seedsOnSlice, colorsOnSlice);
+
+        // СОЗДАЕМ МАРКЕРЫ ДЛЯ 2D ОКНА С Z=0
+        for (size_t i = 0; i < seedsOnSlice.size(); ++i) {
+            // Преобразуем индекс в физические координаты
+            ImageType::PointType physicalPoint;
+            ImageType::IndexType idx = {{seedsOnSlice[i][0], seedsOnSlice[i][1], seedsOnSlice[i][2]}};
+            rescaleFilter->GetOutput()->TransformIndexToPhysicalPoint(idx, physicalPoint);
+            
+            // Ключевое исправление: устанавливаем Z=0 для 2D плоскости
+            physicalPoint[2] = 0.0;
+            
+            // Создаем сферу-маркер
+            vtkSmartPointer<vtkSphereSource> sphere = vtkSmartPointer<vtkSphereSource>::New();
+            sphere->SetCenter(physicalPoint[0], physicalPoint[1], physicalPoint[2]);
+            sphere->SetRadius(2.0); // Размер маркера (в мм)
+            sphere->SetPhiResolution(12);
+            sphere->SetThetaResolution(12);
+            
+            // Мэппер для сферы
+            vtkSmartPointer<vtkPolyDataMapper> sphereMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+            sphereMapper->SetInputConnection(sphere->GetOutputPort());
+            
+            // Актор для сферы
+            vtkSmartPointer<vtkActor> sphereActor = vtkSmartPointer<vtkActor>::New();
+            sphereActor->SetMapper(sphereMapper);
+            sphereActor->GetProperty()->SetColor(colorsOnSlice[i][0], colorsOnSlice[i][1], colorsOnSlice[i][2]);
+            sphereActor->GetProperty()->SetOpacity(0.8);
+            
+            // Добавляем в сцену
+            sliceRenderer->AddActor(sphereActor);
+            
+            std::cout << "  Маркер " << i+1 << ": (" << seedsOnSlice[i][0] << ", " << seedsOnSlice[i][1] << ", " << seedsOnSlice[i][2] 
+                    << ") -> (" << physicalPoint[0] << ", " << physicalPoint[1] << ", " << physicalPoint[2] << ")" << std::endl;
+        }
+
+
+
 
         vtkSmartPointer<vtkRenderWindow> sliceWindow = vtkSmartPointer<vtkRenderWindow>::New();
         sliceWindow->AddRenderer(sliceRenderer);
