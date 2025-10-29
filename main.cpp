@@ -304,8 +304,56 @@ int main()
         std::cout << "   Сид 1: (" << seed1_x << ", " << seed1_y << ", " << seed1_z << ")" << std::endl;
         std::cout << "   Сид 2: (" << seed2_x << ", " << seed2_y << ", " << seed2_z << ")" << std::endl;
         std::cout << "   Сид 3: (" << seed3_x << ", " << seed3_y << ", " << seed3_z << ")" << std::endl;
+        std::cout << "   Сид 4: (" << seed4_x << ", " << seed4_y << ", " << seed4_z << ")" << std::endl;
         
 
+        // Белое вещество сегментация
+        int white_seed1_x = 150, white_seed1_y = 150, white_seed1_z = 26;
+
+        int white_seed2_x = 100, white_seed2_y = 150, white_seed2_z = 26;
+
+        int white_seed3_x = 152, white_seed3_y = 65, white_seed3_z = 26;
+
+        int white_seed4_x = 120, white_seed4_y = 80, white_seed4_z = 26;
+
+        std::cout << "2.3. Сегментация белого вещества (мультимодальная)..." << std::endl;
+
+        using WhiteMatterFilterType = itk::VectorConfidenceConnectedImageFilter<VectorImageType, LabelImageType>;
+        auto white_matter_filter = WhiteMatterFilterType::New();
+        white_matter_filter->SetInput(compose_filter->GetOutput());
+        white_matter_filter->SetNumberOfIterations(3);  // Больше итераций для лучшего роста
+        white_matter_filter->SetMultiplier(2.0);        // Более строгий множитель для белого вещества
+        white_matter_filter->SetReplaceValue(180);      // Уникальное значение для белого вещества
+        // white_matter_filter->SetInitialNeighborhoodRadius(2);  // Больший радиус для лучшей статистики
+
+        // Добавьте сиды
+        white_matter_filter->AddSeed({white_seed1_x, white_seed1_y, white_seed1_z});
+        white_matter_filter->AddSeed({white_seed2_x, white_seed2_y, white_seed2_z});
+        white_matter_filter->AddSeed({white_seed3_x, white_seed3_y, white_seed3_z});
+        white_matter_filter->AddSeed({white_seed4_x, white_seed4_y, white_seed4_z});
+
+        std::cout << "   Добавлены сиды для белого вещества:" << std::endl;
+        std::cout << "   Сид 1: (" << white_seed1_x << ", " << white_seed1_y << ", " << white_seed1_z << ")" << std::endl;
+        std::cout << "   Сид 2: (" << white_seed2_x << ", " << white_seed2_y << ", " << white_seed2_z << ")" << std::endl;
+        std::cout << "   Сид 3: (" << white_seed3_x << ", " << white_seed3_y << ", " << white_seed3_z << ")" << std::endl;
+        std::cout << "   Сид 4: (" << white_seed4_x << ", " << white_seed4_y << ", " << white_seed4_z << ")" << std::endl;
+
+        white_matter_filter->Update();
+
+
+
+        // ДИАГНОСТИКА: проверяем, есть ли сегментированные пиксели
+        LabelImageType::Pointer whiteResult = white_matter_filter->GetOutput();
+        itk::ImageRegionConstIterator<LabelImageType> whiteIt(whiteResult, whiteResult->GetLargestPossibleRegion());
+        whiteIt.GoToBegin();
+        unsigned long whitePixelCount = 0;
+        while (!whiteIt.IsAtEnd()) {
+            if (whiteIt.Get() == 180) {
+                whitePixelCount++;
+            }
+            ++whiteIt;
+        }
+        std::cout << "   Сегментировано пикселей белого вещества: " << whitePixelCount << std::endl;
 
         // СЕГМЕНТАЦИЯ ГЛАЗ - МИНИМАЛЬНЫЙ КОД
         std::cout << "2.2. Сегментация глаз..." << std::endl;
@@ -348,6 +396,16 @@ int main()
         confidence_connector->Update();
 
         vtkImageData* confidenceData = confidence_connector->GetOutput();
+
+        using WhiteMatterConnectorType = itk::ImageToVTKImageFilter<LabelImageType>;
+        auto white_matter_connector = WhiteMatterConnectorType::New();
+        white_matter_connector->SetInput(white_matter_filter->GetOutput());
+        white_matter_connector->Update();
+
+        vtkImageData* whiteMatterData = white_matter_connector->GetOutput();
+
+
+
 
 
 
@@ -483,6 +541,39 @@ int main()
 
         std::cout << "  Volume для VectorConfidenceConnected создан" << std::endl;
         
+
+
+        std::cout << "3.5. Настройка volume для белого вещества..." << std::endl;
+
+        vtkSmartPointer<vtkGPUVolumeRayCastMapper> whiteMatterMapper = 
+            vtkSmartPointer<vtkGPUVolumeRayCastMapper>::New();
+        whiteMatterMapper->SetInputData(whiteMatterData);
+        whiteMatterMapper->SetSampleDistance(0.3);
+
+        vtkSmartPointer<vtkVolumeProperty> whiteMatterProperty = 
+            vtkSmartPointer<vtkVolumeProperty>::New();
+        whiteMatterProperty->ShadeOff();
+        whiteMatterProperty->SetInterpolationTypeToLinear();
+
+        // Белое вещество - СИНИЙ цвет
+        vtkSmartPointer<vtkPiecewiseFunction> whiteMatterOpacity = 
+            vtkSmartPointer<vtkPiecewiseFunction>::New();
+        whiteMatterOpacity->AddPoint(0, 0.0);    // Фон - прозрачный
+        whiteMatterOpacity->AddPoint(180, 0.6);  // Белое вещество - полупрозрачное
+
+        vtkSmartPointer<vtkColorTransferFunction> whiteMatterColor = 
+            vtkSmartPointer<vtkColorTransferFunction>::New();
+        whiteMatterColor->AddRGBPoint(0, 0.0, 0.0, 0.0);      // Фон - черный
+        whiteMatterColor->AddRGBPoint(180, 0.0, 0.4, 1.0);    // Белое вещество - СИНИЙ
+
+        whiteMatterProperty->SetScalarOpacity(whiteMatterOpacity);
+        whiteMatterProperty->SetColor(whiteMatterColor);
+
+        vtkSmartPointer<vtkVolume> whiteMatterVolume = vtkSmartPointer<vtkVolume>::New();
+        whiteMatterVolume->SetMapper(whiteMatterMapper);
+        whiteMatterVolume->SetProperty(whiteMatterProperty);
+
+        std::cout << "  Volume для белого вещества создан" << std::endl;
         // ЭТАП 4: СОЗДАНИЕ СЦЕНЫ
         std::cout << "4. Создание сцены..." << std::endl;
         
@@ -492,6 +583,9 @@ int main()
         renderer->AddVolume(segmentationVolume);        // Цветная сегментация поверх
         
         renderer->AddVolume(confidenceVolume);
+
+        renderer->AddVolume(whiteMatterVolume);
+
         renderer->AddVolume(eyeVolume);
 
         // ВИЗУАЛИЗАЦИЯ СИДОВ В 3D ОКНЕ
@@ -526,6 +620,25 @@ int main()
         };
 
         AddSeedMarkers(renderer, rescaleFilter->GetOutput(), confSeeds, confColors);
+
+        std::vector<std::array<int, 3>> whiteMatterSeeds = {
+            {white_seed1_x, white_seed1_y, white_seed1_z},
+            {white_seed2_x, white_seed2_y, white_seed2_z},
+            {white_seed3_x, white_seed3_y, white_seed3_z},
+            {white_seed4_x, white_seed4_y, white_seed4_z}
+        };
+
+        std::vector<std::array<double, 3>> whiteMatterColors = {
+            {0.0, 0.4, 1.0},  // Синий
+            {0.2, 0.5, 1.0},  // Светло-синий
+            {0.0, 0.3, 0.8},  // Темно-синий
+            {0.4, 0.6, 1.0}   // Очень светлый синий
+        };
+
+        AddSeedMarkers(renderer, rescaleFilter->GetOutput(), whiteMatterSeeds, whiteMatterColors);
+
+
+
         
         renderer->SetBackground(0.0, 0.0, 0.0);
         renderer->ResetCamera();
@@ -632,7 +745,41 @@ int main()
 
         std::cout << "Срез сегментации Confidence Connected добавлен (зеленый, полупрозрачный)" << std::endl;
 
+        std::cout << "6.4. Создание среза для белого вещества..." << std::endl;
 
+        vtkSmartPointer<vtkImageReslice> whiteMatterSliceReslice = vtkSmartPointer<vtkImageReslice>::New();
+        whiteMatterSliceReslice->SetInputData(whiteMatterData);
+        whiteMatterSliceReslice->SetOutputDimensionality(2);
+        whiteMatterSliceReslice->SetResliceAxesDirectionCosines(1,0,0, 0,1,0, 0,0,1);
+        whiteMatterSliceReslice->SetResliceAxesOrigin(0, 0, 26 * 3);
+        whiteMatterSliceReslice->Update();
+
+        // СОЗДАЕМ LUT ДЛЯ СИНЕГО ЦВЕТА (белое вещество)
+        vtkSmartPointer<vtkLookupTable> whiteMatterLUT = vtkSmartPointer<vtkLookupTable>::New();
+        whiteMatterLUT->SetNumberOfColors(256);
+        whiteMatterLUT->SetTableRange(0, 255);
+        whiteMatterLUT->Build();
+
+        // Настраиваем цвета: 0 = прозрачный, 180 = синий
+        for (int i = 0; i < 256; i++) {
+            if (i == 180) {
+                whiteMatterLUT->SetTableValue(i, 0.0, 0.4, 1.0, 0.6); // Синий, полупрозрачный
+            } else {
+                whiteMatterLUT->SetTableValue(i, 0.0, 0.0, 0.0, 0.0); // Полностью прозрачный
+            }
+        }
+
+        // Применяем LUT к данным
+        vtkSmartPointer<vtkImageMapToColors> whiteMatterColorMapper = vtkSmartPointer<vtkImageMapToColors>::New();
+        whiteMatterColorMapper->SetLookupTable(whiteMatterLUT);
+        whiteMatterColorMapper->SetInputConnection(whiteMatterSliceReslice->GetOutputPort());
+        whiteMatterColorMapper->Update();
+
+        // Создаем актор для среза белого вещества
+        vtkSmartPointer<vtkImageActor> whiteMatterSliceActor = vtkSmartPointer<vtkImageActor>::New();
+        whiteMatterSliceActor->GetMapper()->SetInputConnection(whiteMatterColorMapper->GetOutputPort());
+
+        sliceRenderer->AddActor(whiteMatterSliceActor);
 
         // ДОБАВЛЯЕМ СИДЫ В 2D ОКНО
         std::cout << "6.1. Добавление маркеров сидов в 2D окно..." << std::endl;
@@ -645,6 +792,12 @@ int main()
         for (size_t i = 0; i < confSeeds.size(); ++i) {
                 seedsOnSlice.push_back(confSeeds[i]);
                 colorsOnSlice.push_back(confColors[i]);
+        }
+
+        // ДОБАВЛЯЕМ СИДЫ БЕЛОГО ВЕЩЕСТВА
+        for (size_t i = 0; i < whiteMatterSeeds.size(); ++i) {
+            seedsOnSlice.push_back(whiteMatterSeeds[i]);
+            colorsOnSlice.push_back(whiteMatterColors[i]);
         }
 
         // Создаем маркеры для 2D окна
