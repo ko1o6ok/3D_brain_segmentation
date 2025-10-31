@@ -74,9 +74,21 @@
 #include <vtkActor.h>
 #include <vtkProperty.h>
 
+
+#include <vtkContourFilter.h>
+#include <vtkWindowedSincPolyDataFilter.h>
+
+// Для кнопок-переключателей
+#include <vtkTextWidget.h>
+#include <vtkTextRepresentation.h>
+#include <vtkTextActor.h>
+#include <vtkTextProperty.h>
+#include <vtkCallbackCommand.h>
+
 #include "vtkAutoInit.h"
 VTK_MODULE_INIT(vtkRenderingOpenGL2)
 VTK_MODULE_INIT(vtkInteractionStyle)
+VTK_MODULE_INIT(vtkRenderingFreeType)
 // Для сообщений
 #include <iostream>
 #include <itkCastImageFilter.h>
@@ -140,7 +152,6 @@ void AddSeedMarkers(vtkRenderer* renderer, ImageType::Pointer image,
                   << ") -> (" << physicalPoint[0] << ", " << physicalPoint[1] << ", " << physicalPoint[2] << ")" << std::endl;
     }
 }
-
 
 int main()
 {
@@ -489,7 +500,7 @@ int main()
         vtkSmartPointer<vtkPiecewiseFunction> eyeOpacity = 
             vtkSmartPointer<vtkPiecewiseFunction>::New();
         eyeOpacity->AddPoint(0, 0.0);    // Фон - прозрачный
-        eyeOpacity->AddPoint(255, 0.8);  //0.8 Глаза - полупрозрачные
+        eyeOpacity->AddPoint(255, 0.1);  //0.8 Глаза - полупрозрачные
 
         vtkSmartPointer<vtkColorTransferFunction> eyeColor = 
             vtkSmartPointer<vtkColorTransferFunction>::New();
@@ -521,11 +532,11 @@ int main()
         confidenceProperty->ShadeOff();
         confidenceProperty->SetInterpolationTypeToLinear();
 
-        // Результат VectorConfidenceConnected - СИНИЙ
+        // Результат VectorConfidenceConnected -
         vtkSmartPointer<vtkPiecewiseFunction> confidenceOpacity = 
             vtkSmartPointer<vtkPiecewiseFunction>::New();
         confidenceOpacity->AddPoint(0, 0.0);    // Фон - прозрачный
-        confidenceOpacity->AddPoint(255, 0.7);  // Сегментация - полупрозрачная
+        confidenceOpacity->AddPoint(255, 0.1);  // Сегментация - полупрозрачная
 
         vtkSmartPointer<vtkColorTransferFunction> confidenceColor = 
             vtkSmartPointer<vtkColorTransferFunction>::New();
@@ -559,7 +570,7 @@ int main()
         vtkSmartPointer<vtkPiecewiseFunction> whiteMatterOpacity = 
             vtkSmartPointer<vtkPiecewiseFunction>::New();
         whiteMatterOpacity->AddPoint(0, 0.0);    // Фон - прозрачный
-        whiteMatterOpacity->AddPoint(180, 0.6);  // Белое вещество - полупрозрачное
+        whiteMatterOpacity->AddPoint(180, 0.1);  // Белое вещество - полупрозрачное
 
         vtkSmartPointer<vtkColorTransferFunction> whiteMatterColor = 
             vtkSmartPointer<vtkColorTransferFunction>::New();
@@ -574,19 +585,101 @@ int main()
         whiteMatterVolume->SetProperty(whiteMatterProperty);
 
         std::cout << "  Volume для белого вещества создан" << std::endl;
+
+
+
+
+        // СОЗДАНИЕ CONTOUR FILTER ДЛЯ КАЖДОГО СЕГМЕНТИРОВАННОГО ОБЪЕКТА
+        std::cout << "3.6. Создание контуров для сегментированных объектов..." << std::endl;
+
+        // Контуры для глаз
+        vtkSmartPointer<vtkContourFilter> eyeContourFilter = vtkSmartPointer<vtkContourFilter>::New();
+        eyeContourFilter->SetInputData(eyeData);
+        eyeContourFilter->SetValue(0, 128.0); // Изоповерхность на уровне 128
+
+        vtkSmartPointer<vtkWindowedSincPolyDataFilter> eyeSmoother = 
+            vtkSmartPointer<vtkWindowedSincPolyDataFilter>::New();
+        eyeSmoother->SetInputConnection(eyeContourFilter->GetOutputPort());
+        eyeSmoother->SetNumberOfIterations(20);
+        eyeSmoother->SetPassBand(0.05);
+        eyeSmoother->BoundarySmoothingOn();
+        eyeSmoother->FeatureEdgeSmoothingOn();
+        eyeSmoother->NormalizeCoordinatesOn();
+
+        // Контуры для серого вещества (Confidence Connected)
+        vtkSmartPointer<vtkContourFilter> confidenceContourFilter = vtkSmartPointer<vtkContourFilter>::New();
+        confidenceContourFilter->SetInputData(confidenceData);
+        confidenceContourFilter->SetValue(0, 128.0);
+
+        vtkSmartPointer<vtkWindowedSincPolyDataFilter> confidenceSmoother = 
+            vtkSmartPointer<vtkWindowedSincPolyDataFilter>::New();
+        confidenceSmoother->SetInputConnection(confidenceContourFilter->GetOutputPort());
+        confidenceSmoother->SetNumberOfIterations(25); // Больше итераций для сложных форм
+        confidenceSmoother->SetPassBand(0.03); // Более сильное сглаживание
+        confidenceSmoother->BoundarySmoothingOn();
+        confidenceSmoother->FeatureEdgeSmoothingOn();
+
+        // Контуры для белого вещества
+        vtkSmartPointer<vtkContourFilter> whiteMatterContourFilter = vtkSmartPointer<vtkContourFilter>::New();
+        whiteMatterContourFilter->SetInputData(whiteMatterData);
+        whiteMatterContourFilter->SetValue(0, 90.0); // Для белого вещества с значением 180
+
+        vtkSmartPointer<vtkWindowedSincPolyDataFilter> whiteMatterSmoother = 
+            vtkSmartPointer<vtkWindowedSincPolyDataFilter>::New();
+        whiteMatterSmoother->SetInputConnection(whiteMatterContourFilter->GetOutputPort());
+        whiteMatterSmoother->SetNumberOfIterations(20);
+        whiteMatterSmoother->SetPassBand(0.05);
+        whiteMatterSmoother->BoundarySmoothingOn();
+
+
+        // Мэпперы для контуров
+        vtkSmartPointer<vtkPolyDataMapper> eyeContourMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        eyeContourMapper->SetInputConnection(eyeSmoother->GetOutputPort());
+        eyeContourMapper->ScalarVisibilityOff();
+
+        vtkSmartPointer<vtkPolyDataMapper> confidenceContourMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        confidenceContourMapper->SetInputConnection(confidenceSmoother->GetOutputPort());
+        confidenceContourMapper->ScalarVisibilityOff();
+
+        vtkSmartPointer<vtkPolyDataMapper> whiteMatterContourMapper = vtkSmartPointer<vtkPolyDataMapper>::New();
+        whiteMatterContourMapper->SetInputConnection(whiteMatterSmoother->GetOutputPort());
+        whiteMatterContourMapper->ScalarVisibilityOff();
+
+        // Акторы для контуров
+        vtkSmartPointer<vtkActor> eyeContourActor = vtkSmartPointer<vtkActor>::New();
+        eyeContourActor->SetMapper(eyeContourMapper);
+        eyeContourActor->GetProperty()->SetColor(1.0, 0.0, 0.0); // Красный для глаз
+        eyeContourActor->GetProperty()->SetLineWidth(2.0);
+
+        vtkSmartPointer<vtkActor> confidenceContourActor = vtkSmartPointer<vtkActor>::New();
+        confidenceContourActor->SetMapper(confidenceContourMapper);
+        confidenceContourActor->GetProperty()->SetColor(0.0, 1.0, 0.0); // Зеленый для серого вещества
+        confidenceContourActor->GetProperty()->SetLineWidth(2.0);
+
+        vtkSmartPointer<vtkActor> whiteMatterContourActor = vtkSmartPointer<vtkActor>::New();
+        whiteMatterContourActor->SetMapper(whiteMatterContourMapper);
+        whiteMatterContourActor->GetProperty()->SetColor(0.0, 0.4, 1.0); // Синий для белого вещества
+        whiteMatterContourActor->GetProperty()->SetLineWidth(2.0);
+
+
         // ЭТАП 4: СОЗДАНИЕ СЦЕНЫ
         std::cout << "4. Создание сцены..." << std::endl;
         
         vtkSmartPointer<vtkRenderer> renderer = vtkSmartPointer<vtkRenderer>::New();
         
         // ПРАВИЛЬНЫЙ ПОРЯДОК: сначала основной volume, потом сегментация поверх                    // Основной ч/б мозг
-        renderer->AddVolume(segmentationVolume);        // Цветная сегментация поверх
+        // renderer->AddVolume(segmentationVolume);        // Цветная сегментация поверх
         
-        renderer->AddVolume(confidenceVolume);
+        // renderer->AddVolume(confidenceVolume);
 
-        renderer->AddVolume(whiteMatterVolume);
+        // renderer->AddVolume(whiteMatterVolume);
 
-        renderer->AddVolume(eyeVolume);
+        // renderer->AddVolume(eyeVolume);
+
+
+        renderer->AddActor(eyeContourActor);
+        renderer->AddActor(confidenceContourActor);
+        renderer->AddActor(whiteMatterContourActor);
 
         // ВИЗУАЛИЗАЦИЯ СИДОВ В 3D ОКНЕ
         std::cout << "4.1. Добавление маркеров сидов в 3D окно..." << std::endl;
@@ -619,7 +712,7 @@ int main()
             {1.0, 1.0, 0.0}
         };
 
-        AddSeedMarkers(renderer, rescaleFilter->GetOutput(), confSeeds, confColors);
+        // AddSeedMarkers(renderer, rescaleFilter->GetOutput(), confSeeds, confColors);
 
         std::vector<std::array<int, 3>> whiteMatterSeeds = {
             {white_seed1_x, white_seed1_y, white_seed1_z},
@@ -635,7 +728,7 @@ int main()
             {0.4, 0.6, 1.0}   // Очень светлый синий
         };
 
-        AddSeedMarkers(renderer, rescaleFilter->GetOutput(), whiteMatterSeeds, whiteMatterColors);
+        // AddSeedMarkers(renderer, rescaleFilter->GetOutput(), whiteMatterSeeds, whiteMatterColors);
 
 
 
@@ -661,6 +754,125 @@ int main()
         vtkSmartPointer<vtkInteractorStyleTrackballCamera> style = 
             vtkSmartPointer<vtkInteractorStyleTrackballCamera>::New();
         interactor->SetInteractorStyle(style);
+
+
+
+
+
+
+
+
+
+        // СОЗДАНИЕ ПРОСТЫХ КНОПОК ДЛЯ УПРАВЛЕНИЯ ВИДИМОСТЬЮ
+std::cout << "4.2. Создание кнопок управления видимостью..." << std::endl;
+
+// Класс для хранения состояния и обработки кликов
+class MouseCallback : public vtkCommand {
+public:
+    static MouseCallback* New() {
+        return new MouseCallback;
+    }
+    
+    // Устанавливаем акторы и кнопки
+    void SetActors(vtkActor* eyes, vtkActor* gray, vtkActor* white,
+                   vtkTextActor* btnEyes, vtkTextActor* btnGray, vtkTextActor* btnWhite) {
+        eyesActor = eyes;
+        grayMatterActor = gray;
+        whiteMatterActor = white;
+        eyesButton = btnEyes;
+        grayMatterButton = btnGray;
+        whiteMatterButton = btnWhite;
+        
+        // Инициализируем состояния
+        eyesVisible = true;
+        grayMatterVisible = true;
+        whiteMatterVisible = true;
+    }
+    
+    virtual void Execute(vtkObject* caller, unsigned long eventId, void* callData) {
+        if (eventId == vtkCommand::LeftButtonPressEvent) {
+            vtkRenderWindowInteractor* interactor = static_cast<vtkRenderWindowInteractor*>(caller);
+            int* clickPos = interactor->GetEventPosition();
+            
+            // Проверяем клик по кнопкам (простая проверка по координатам)
+            if (clickPos[0] >= 20 && clickPos[0] <= 250) {
+                if (clickPos[1] >= 900 && clickPos[1] <= 930) {
+                    // Клик по кнопке Eyes
+                    eyesVisible = !eyesVisible;
+                    if (eyesActor) eyesActor->SetVisibility(eyesVisible);
+                    if (eyesButton) eyesButton->SetInput(eyesVisible ? "Eyes: ON" : "Eyes: OFF");
+                    std::cout << "Eyes visibility: " << (eyesVisible ? "ON" : "OFF") << std::endl;
+                }
+                else if (clickPos[1] >= 850 && clickPos[1] <= 880) {
+                    // Клик по кнопке Gray Matter
+                    grayMatterVisible = !grayMatterVisible;
+                    if (grayMatterActor) grayMatterActor->SetVisibility(grayMatterVisible);
+                    if (grayMatterButton) grayMatterButton->SetInput(grayMatterVisible ? "Gray Matter: ON" : "Gray Matter: OFF");
+                    std::cout << "Gray Matter visibility: " << (grayMatterVisible ? "ON" : "OFF") << std::endl;
+                }
+                else if (clickPos[1] >= 800 && clickPos[1] <= 830) {
+                    // Клик по кнопке White Matter
+                    whiteMatterVisible = !whiteMatterVisible;
+                    if (whiteMatterActor) whiteMatterActor->SetVisibility(whiteMatterVisible);
+                    if (whiteMatterButton) whiteMatterButton->SetInput(whiteMatterVisible ? "White Matter: ON" : "White Matter: OFF");
+                    std::cout << "White Matter visibility: " << (whiteMatterVisible ? "ON" : "OFF") << std::endl;
+                }
+                
+                if (interactor->GetRenderWindow()) {
+                    interactor->GetRenderWindow()->Render();
+                }
+            }
+        }
+    }
+
+private:
+    vtkActor* eyesActor = nullptr;
+    vtkActor* grayMatterActor = nullptr;
+    vtkActor* whiteMatterActor = nullptr;
+    vtkTextActor* eyesButton = nullptr;
+    vtkTextActor* grayMatterButton = nullptr;
+    vtkTextActor* whiteMatterButton = nullptr;
+    bool eyesVisible = true;
+    bool grayMatterVisible = true;
+    bool whiteMatterVisible = true;
+};
+
+// Функция для создания текстовых кнопок
+auto CreateTextButton = [&renderer](const std::string& text, double yPos, double* color) -> vtkSmartPointer<vtkTextActor> {
+    vtkSmartPointer<vtkTextActor> textActor = vtkSmartPointer<vtkTextActor>::New();
+    textActor->SetInput(text.c_str());
+    textActor->GetTextProperty()->SetColor(color[0], color[1], color[2]);
+    textActor->GetTextProperty()->SetBackgroundColor(0.0, 0.0, 0.0);
+    textActor->GetTextProperty()->SetBackgroundOpacity(0.7);
+    textActor->GetTextProperty()->SetFontSize(20);
+    textActor->GetTextProperty()->SetBold(true);
+    textActor->GetTextProperty()->SetJustificationToLeft();
+    textActor->SetPosition(20, yPos); // Позиция в пикселях от левого нижнего угла
+    
+    renderer->AddActor2D(textActor);
+    return textActor;
+};
+
+// Цвета для кнопок
+double red[] = {1.0, 0.0, 0.0};
+double green[] = {0.0, 1.0, 0.0};
+double blue[] = {0.0, 0.4, 1.0};
+
+// Создаем кнопки (обратите внимание на порядок Y-координат - от верхней к нижней)
+vtkSmartPointer<vtkTextActor> eyesButton = CreateTextButton("Eyes: ON", 900, red);
+vtkSmartPointer<vtkTextActor> grayMatterButton = CreateTextButton("Gray Matter: ON", 850, green);
+vtkSmartPointer<vtkTextActor> whiteMatterButton = CreateTextButton("White Matter: ON", 800, blue);
+
+// Создаем и настраиваем колбэк
+vtkSmartPointer<MouseCallback> mouseCallback = vtkSmartPointer<MouseCallback>::New();
+mouseCallback->SetActors(eyeContourActor, confidenceContourActor, whiteMatterContourActor,
+                         eyesButton, grayMatterButton, whiteMatterButton);
+
+// Устанавливаем колбэк для обработки кликов мыши
+interactor->AddObserver(vtkCommand::LeftButtonPressEvent, mouseCallback);
+
+std::cout << "   Кнопки созданы в левом верхнем углу" << std::endl;
+std::cout << "   Кликните по тексту для переключения видимости" << std::endl;
         
         std::cout << "5. Запуск рендеринга..." << std::endl;
         window->Render();
@@ -864,5 +1076,6 @@ int main()
     }
 
     std::cout << "Программа завершена" << std::endl;
+
     return 0;
 }
