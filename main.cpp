@@ -744,7 +744,7 @@ int main()
         vtkSmartPointer<vtkRenderWindow> window = vtkSmartPointer<vtkRenderWindow>::New();
         window->AddRenderer(renderer);
         window->SetSize(1000, 1000);
-        window->SetWindowName("3D Volume Rendering - Мозг с сегментацией");
+        window->SetWindowName("3D Rendering - Мозг с сегментацией");
         window->SetMultiSamples(0);
         
         vtkSmartPointer<vtkRenderWindowInteractor> interactor = 
